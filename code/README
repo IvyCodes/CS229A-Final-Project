@@ -1,0 +1,5 @@
+balanced: original balanced data. Beginning of clips have high predicted values for some reason
+
+new_data: balanced, but with beginning of clips removed
+
+imbalanced: balanced, but with spaces between chirps not removed
