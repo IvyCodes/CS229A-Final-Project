@@ -3,6 +3,8 @@ from python_speech_features import mfcc
 import numpy as np
 from scipy import linalg
 import matplotlib.pyplot as plt
+import operator
+import random
 
 '''
 
@@ -33,7 +35,11 @@ def cost_function(theta, X, y, lamb):
 	return (J,grad)
 
 def acc_function(y, y_test):
-	for 
+	num_correct = 0
+	for (y_i, y_test_i) in zip(y, y_test):
+		num_correct += 1 if y_i == y_test_i else 0
+	return num_correct/len(y)
+
 
 def update(theta, grad, alpha):
 	return theta - grad.dot(alpha)
@@ -74,44 +80,168 @@ def create_labels(winlen, winstep, m, file_name):
 			y[pos] = 1
 	return np.array([y]).T
 
-def create_intervals(winlen, winstep, X, theta, out_file_name, threshold = 0.5, smooth_step = 10, ignore_step = 30, confidence_threshold = .66):
-	h = sigmoid(X.dot(theta))
-	print('number of windows: ' + str(h.size))
+def split_data(X, y, test_ratio = 0.3):
+	m = y.size
+	mtest = np.floor(m*0.3)
+	mtrain = m - mtest
+	begin_i = random.randint(0,mtrain)
+	end_i = int(begin_i + mtest)
+	ytrain = np.append(y[0:begin_i,:], y[end_i::,:], axis = 0)
+	ytest = y[begin_i:end_i,:]
+	Xtrain = np.append(X[0:begin_i,:], X[end_i::,:], axis = 0)
+	Xtest = X[begin_i:end_i,:]
+	return (Xtrain, ytrain, Xtest, ytest)
 
-	result = np.argwhere(h > threshold)[:,0]
-	# print(result)
-	intervals = []
-	begin_i = result[0]
-	end_i = result[0]
-	confidence_vals = []
-	for i in result:
-		if i <= end_i + smooth_step:
-			end_i = i
-			confidence_vals.append(h[i,0])
-		else:
-			if end_i-begin_i > ignore_step:
-				confidence = np.around(np.mean(confidence_vals), decimals = 2)
-				if confidence > confidence_threshold:
-					begin_time = begin_i*winstep
-					end_time = end_i * winstep + winlen
-					intervals.append([str(begin_time), str(end_time), str(confidence)+'\n'])
-			begin_i = i
-			end_i = i
-			confidence_vals = []
+	return (Xtrain, ytrain, Xtest, ytest)
+def get_h(X, theta):
+	return sigmoid(X.dot(theta))[:,0]
 
-	file = open(out_file_name, 'w+')
-	for i in intervals:
-		out_string = "\t".join(i)
-		#print(i)
-		file.write(out_string)
+def smooth_h(h, window = 20):
+	index_bound = len(h)
+	new_result = [0]*index_bound
+	for i in range(index_bound):
+		lowerbd = int(max(min(i-window/2,index_bound),0))
+		upperbd = int(max(min(i+window/2,index_bound),0))
+		avg = np.mean(h[lowerbd:upperbd])
+		new_result[i] = avg
+	return new_result
+
+def get_result(h, threshold = 0.5):
+	result = []
+	for i in h:
+		res = 1 if i > threshold else 0
+		result.append(res)
+	return result
+
+def smooth_result(result, window = 20, method = 'sliding'): #TODO: test this
+	index_bound = len(result)
+	if method == 'discrete':
+		for i in range(int(index_bound/window) + 1):
+			lowerbd = max(min(i*5,index_bound),0)
+			upperbd = max(min(i*5+window,index_bound),0)
+			avg = np.mean(result[lowerbd:upperbd])
+			# print(avg)
+			if avg > 0.5:
+				result[lowerbd:upperbd] = [1]*(upperbd - lowerbd)
+			else:
+				result[lowerbd:upperbd] = [0]*(upperbd - lowerbd)
+		return result
+	elif method == 'sliding':
+		new_result = [0]*len(result)
+		for i in range(len(new_result)):
+			lowerbd = int(max(min(i-window/2,index_bound),0))
+			upperbd = int(max(min(i+window/2,index_bound),0))
+			avg = np.mean(result[lowerbd:upperbd])
+			if avg > 0.5:
+				new_result[i] = 1
+			else:
+				new_result[i] = 0
+		return new_result
+
+def create_intervals(result):
+	val_changes = list(map(operator.sub, result[1:-1], result[0:-2]))
+	index = 0
+	begin = []
+	end = []
+	for i in val_changes:
+		if i == 1:
+			begin.append(index)
+		elif i == -1:
+			end.append(index)
+		index+=1
+	if len(end) > len(begin):
+		begin = [0] + begin
+	elif len(begin) > len(end):
+		end = end + [len(result)+1]
+	return zip(begin, end)
+
+def write_intervals(intervals, out_file, winlen):
+	file = open(out_file, 'w+')
+	for (x,y) in intervals:
+		file.write('\t'.join((str(x*winlen),str(y*winlen),'\n')))
 	file.close()
 
 
 
+def find_lambda(X, y, min_lamb, max_lamb, step_size = 1):
+	(Xtrain, ytrain, Xtest, ytest) = split_data(X,y)
+
+	train_acc = []
+	test_acc = []
+	lamb = min_lamb
+	(Xtrain, ytrain, Xtest, ytest) = split_data(X,y)
+
+	while lamb < max_lamb:
+		(theta,hist) = train(Xtrain, ytrain, lamb, .3, 2000)
+
+		htest = get_h(Xtest,theta)
+		smoothed_htest = smooth_h(htest)
+		resulttest = get_result(smoothed_htest)
+		smoothed_resulttest = smooth_result(resulttest)
+
+		h = get_h(Xtrain,theta)
+		smoothed_h = smooth_h(h)
+		result = get_result(smoothed_h)
+		smoothed_result = smooth_result(result)
+
+		train_acc.append(acc_function(ytrain,smoothed_result))
+		test_acc.append(acc_function(ytest,smoothed_resulttest))
+		lamb += step_size
+	plt.plot(train_acc, label='Training Accuracy')
+	plt.plot(test_acc, label = 'Test Accuracy')
+	plt.legend()
+	plt.show()
+
+def show_hist(hist):
+	plt.plot(hist)
+	plt.xlabel('m')
+	plt.ylabel('Cost')
+	plt.show()
 
 
-train_file_name = 'test_short'
-test_file_name = 'test_long'
+def show_smoothing(X,y, lamb = 0, show_history = True):
+	(Xtrain, ytrain, Xtest, ytest) = split_data(X,y)
+	(theta,hist) = train(Xtrain, ytrain, lamb, .3, 2000)
+	if show_history:
+		show_hist(hist)
+
+	htest = get_h(Xtest,theta)
+	smoothed_htest = smooth_h(htest)
+	resulttest = get_result(smoothed_htest)
+	smoothed_resulttest = smooth_result(resulttest)
+
+	htrain = get_h(Xtrain,theta)
+	smoothed_htrain = smooth_h(htrain)
+	resulttrain = get_result(smoothed_htrain)
+	smoothed_resulttrain = smooth_result(resulttrain)
+
+	plt.subplot(5, 2, 1)
+	plt.plot(ytrain)
+	plt.subplot(5, 2, 3)
+	plt.plot(htrain)
+	plt.subplot(5, 2, 5)
+	plt.plot(smoothed_htrain)
+	plt.subplot(5, 2, 7)
+	plt.plot(resulttrain)
+	plt.subplot(5, 2, 9)
+	plt.plot(smoothed_resulttrain, label = str(acc_function(ytrain,smoothed_resulttrain)))
+	plt.legend()
+
+	plt.subplot(5, 2, 2)
+	plt.plot(ytest)
+	plt.subplot(5, 2, 4)
+	plt.plot(htest)
+	plt.subplot(5, 2, 6)
+	plt.plot(smoothed_htest)
+	plt.subplot(5, 2, 8)
+	plt.plot(resulttest)
+	plt.subplot(5, 2, 10)
+	plt.plot(smoothed_resulttest, label = str(acc_function(ytest,smoothed_resulttest)))
+	plt.legend()
+
+	plt.show()
+
+train_file_name = 'balanced'
 
 window_length = 0.04
 window_step = 0.01
@@ -120,45 +250,23 @@ window_step = 0.01
 (X,m) = create_features(window_length, window_step, train_file_name + '.wav')
 y = create_labels(window_length, window_step, m, train_file_name + '.txt')
 
-(Xtest, mtest) = create_features(window_length, window_step, test_file_name + '.wav')
-ytest = create_labels(window_length, window_step, mtest, test_file_name + '.txt')
+find_lambda(X, y, 0, 200, 15)
 
-lambs = []
-train_errs = []
-test_errs = []
-min_lamb = 0
-min_err = 10
-for lamb in range(0,300):
-	# file.write(str(lamb) + "\t" + str(J_train) + "\t" + str(J_test) + "\n")
-	(theta,hist) = train(X, y, lamb, .35, 2000)
-	(J_train, _) = cost_function(theta, X, y, 0)
-	(J_test, _) = cost_function(theta, Xtest, ytest, 0)
 
-	lambs.append(lamb)
-	train_errs.append(J_train[0,0])
-	test_errs.append(J_test[0,0])
+# write_intervals(create_intervals(smoothed_result), 'new_short_result.txt', window_step)
 
-	if J_test[0,0] < min_err:
-		min_lamb = lamb
-		min_err = J_test[0,0]
 
-	# print("training error = " + str(J_train))
-	# print("test error = " + str(J_test))
 
-	if lamb == 200:
-		outfile = 'test_long_output.txt'
-		create_intervals(window_length, window_step, Xtest, theta, outfile, threshold = 0.55)
-		create_intervals(window_length, window_step, X, theta, 'test_short_output.txt', threshold = 0.55)
 
-print(min_lamb)
 
-plt.plot(lambs, test_errs, 'r', label='Validation error')
-plt.plot(lambs, train_errs, 'b', label = 'Training error')
-plt.xlabel('Lambda')
-plt.ylabel('Error')
-plt.title('Training error')
-plt.legend()
-plt.show()
+
+
+
+
+
+
+
+
 
 # pos = len(np.argwhere(y==1))
 # neg = len(np.argwhere(y==0))
