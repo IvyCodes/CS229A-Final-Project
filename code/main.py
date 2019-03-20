@@ -106,7 +106,7 @@ def smooth_h(h, window = 20):
 		new_result[i] = avg
 	return new_result
 
-def get_result(h, threshold = 0.5):
+def get_result(h, threshold = 0.3):
 	result = []
 	for i in h:
 		res = 1 if i > threshold else 0
@@ -161,6 +161,14 @@ def write_intervals(intervals, out_file, winlen):
 		file.write('\t'.join((str(x*winlen),str(y*winlen),'\n')))
 	file.close()
 
+def show_hist(hist):
+	plt.plot(hist)
+	plt.xlabel('Training Epoch')
+	plt.ylabel('J')
+	plt.ylim([-0.03, 1.03])
+	plt.show()
+
+
 def train_n_times(X, y, lamb, alpha = 0.3, num_iter = 2000, n = 1):
 	train_acc = []
 	test_acc = []
@@ -189,6 +197,38 @@ def train_n_times(X, y, lamb, alpha = 0.3, num_iter = 2000, n = 1):
 	print(thetas/n)
 	return (np.mean(train_acc),np.mean(test_acc),thetas/n)
 
+def find_roc(X,y, lamb = 0.5, alpha = 0.3, num_iter = 2000):
+	fpr = []
+	tpr = []
+	thresholds = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
+	(Xtrain, ytrain, Xtest, ytest) = split_data(X,y)
+	(theta,hist) = train(Xtrain, ytrain, lamb, alpha, num_iter)
+	htest = get_h(Xtest,theta)
+	smoothed_htest = smooth_h(htest)
+	for t in thresholds:
+		false_positives = 0
+		false_negatives = 0
+		true_positives = 0
+		true_negatives = 0
+
+		resulttest = get_result(smoothed_htest, threshold = t)
+		smoothed_resulttest = smooth_result(resulttest)
+
+		for (y_i, y_test_i) in zip(ytest, smoothed_resulttest):
+			if y_i == y_test_i == 1:
+				true_positives += 1
+			elif y_i == y_test_i == 0:
+				true_negatives += 1
+			elif y_i == 1 and y_test_i == 0:
+				false_negatives += 1
+			else:
+				false_positives += 1
+
+		fpr.append(false_positives/(false_positives + true_negatives))
+		tpr.append(true_positives/(true_positives + false_negatives))
+
+	return (tpr, fpr)
+
 
 
 def find_lambda(X, y, min_lamb, max_lamb, step_size = 0.1):
@@ -196,12 +236,15 @@ def find_lambda(X, y, min_lamb, max_lamb, step_size = 0.1):
 
 	train_acc = []
 	test_acc = []
+	lambs = []
 	lamb = min_lamb
-
+	hist1 = None
 	while lamb < max_lamb:
 		print("training with lambda = " + str(lamb))
 
-		(theta,hist) = train(Xtrain, ytrain, lamb, .3, 2000)
+		(theta,hist) = train(Xtrain, ytrain, lamb, .33, 20000)
+		if hist1 is None:
+			hist1 = hist
 		htest = get_h(Xtest,theta)
 		smoothed_htest = smooth_h(htest)
 		resulttest = get_result(smoothed_htest)
@@ -215,8 +258,9 @@ def find_lambda(X, y, min_lamb, max_lamb, step_size = 0.1):
 		t1 = acc_function(ytrain,smoothed_result)
 		t2 = acc_function(ytest,smoothed_resulttest)
 		# print(theta)
-		train_acc.append(t1)
-		test_acc.append(t2)
+		train_acc.append(1-t1)
+		test_acc.append(1-t2)
+		lambs.append(lamb)
 
 
 		# (a1, a2, theta) = train_n_times(X, y, lamb, alpha = 0.3, num_iter = 2000, n = 15)
@@ -224,25 +268,23 @@ def find_lambda(X, y, min_lamb, max_lamb, step_size = 0.1):
 		# test_acc.append(a2)
 
 		lamb += step_size
-	plt.plot(train_acc, label='Training Accuracy')
-	plt.plot(test_acc, label = 'Test Accuracy')
+	show_hist(hist1)
+	plt.plot(lambs, train_acc,label='Training Error')
+	plt.plot(lambs, test_acc,label = 'Validation Error')
+	plt.xlabel('Lambda')
+	plt.ylabel('Error')
+	plt.ylim([-0.03, 1.03])
 	plt.legend()
-	plt.show()
-
-def show_hist(hist):
-	plt.plot(hist)
-	plt.xlabel('m')
-	plt.ylabel('Cost')
 	plt.show()
 
 
 def show_smoothing(X,y, lamb = 0, show_history = True, theta = None):
-	(bottom,top) = (20000,25000)
+	(bottom,top) = (3000,5000)
 	form = 1 #makes pictures look nice
 	if theta is None:
 		form = 0
 		(Xtrain, ytrain, X, y) = split_data(X,y)
-		(theta,hist) = train(Xtrain, ytrain, lamb, .3, 2000)
+		(theta,hist) = train(Xtrain, ytrain, lamb, .2, 2000)
 		if show_history:
 			show_hist(hist)
 		htrain = get_h(Xtrain,theta)
@@ -252,31 +294,31 @@ def show_smoothing(X,y, lamb = 0, show_history = True, theta = None):
 		plt.subplot(5, 2, 1)
 		plt.plot(ytrain)
 		plt.title("Labeled Data", fontdict={'fontsize': 10})
-		#plt.xlim([bottom,top])
+		plt.xlim([bottom,top])
 		plt.ylim([-0.03, 1.03])
 
 		plt.subplot(5, 2, 3)
 		plt.plot(htrain)
 		plt.title("Hypothesis", fontdict={'fontsize': 10})
-		#plt.xlim([bottom,top])
+		plt.xlim([bottom,top])
 		plt.ylim([-0.03, 1.03])
 
 		plt.subplot(5, 2, 5)
-		plot.plot(smoothed_htrain)
+		plt.plot(smoothed_htrain)
 		plt.title("Smoothed Hypothesis", fontdict={'fontsize': 10})
-		#plt.xlim([bottom,top])
+		plt.xlim([bottom,top])
 		plt.ylim([-0.03, 1.03])
 
 		plt.subplot(5, 2, 7)
 		plt.plot(resulttrain)
 		plt.title("Prediction", fontdict={'fontsize': 10})
-		#plt.xlim([bottom,top])
+		plt.xlim([bottom,top])
 		plt.ylim([-0.03, 1.03])
 
 		plt.subplot(5, 2, 9)
 		plt.title("Smoothed Result" + " (Accuracy = " + str(np.around(acc_function(ytrain,smoothed_resulttrain), decimals = 5)) + ")", fontdict={'fontsize': 10})
 		plt.plot(smoothed_resulttrain)
-		#plt.xlim([bottom,top])
+		plt.xlim([bottom,top])
 		plt.ylim([-0.03, 1.03])
 
 	htest = get_h(X,theta)
@@ -287,35 +329,35 @@ def show_smoothing(X,y, lamb = 0, show_history = True, theta = None):
 	plt.subplot(5, 2-form, 2/(form+1))
 	plt.plot(y)
 	plt.title("Labeled Data", fontdict={'fontsize': 10})
-	# plt.xlim([bottom,top])
+	plt.xlim([bottom,top])
 	plt.ylim([-0.03, 1.03])
 	
 
 	plt.subplot(5, 2-form, 4/(form+1))
 	plt.plot(htest)
 	plt.title("Hypothesis", fontdict={'fontsize': 10})
-	# plt.xlim([bottom,top])
+	plt.xlim([bottom,top])
 	plt.ylim([-0.03, 1.03])
 	plt.tight_layout()
 
 	plt.subplot(5, 2-form, 6/(form+1))
 	plt.plot(smoothed_htest)
 	plt.title("Smoothed Hypothesis", fontdict={'fontsize': 10})
-	# plt.xlim([bottom,top])
+	plt.xlim([bottom,top])
 	plt.ylim([-0.03, 1.03])
 	plt.tight_layout()
 
 	plt.subplot(5, 2-form, 8/(form+1))
 	plt.plot(resulttest)
 	plt.title("Result", fontdict={'fontsize': 10})
-	# plt.xlim([bottom,top])
+	plt.xlim([bottom,top])
 	plt.ylim([-0.03, 1.03])
 	plt.tight_layout()
 
 	plt.subplot(5, 2-form, 10/(form+1))
 	plt.title("Smoothed Result" + " (Accuracy = " + str(np.around(acc_function(y,smoothed_resulttest), decimals = 5)) + ")", fontdict={'fontsize': 10})
 	plt.plot(smoothed_resulttest)
-	# plt.xlim([bottom,top])
+	plt.xlim([bottom,top])
 	plt.ylim([-0.03, 1.03])
 	plt.tight_layout()
 
@@ -332,29 +374,20 @@ window_step = 0.01
 (X,m) = create_features(window_length, window_step, train_file_name + '.wav')
 y = create_labels(window_length, window_step, m, train_file_name + '.txt')
 
-(Xtest,m) = create_features(window_length, window_step, train_file_name + '.wav')
-ytest = create_labels(window_length, window_step, m, train_file_name + '.txt')
+# (tpr, fpr) = find_roc(X,y, lamb = 0.5, alpha = 0.3, num_iter = 2000)
+# print(tpr)
+# print(fpr)
 
-# find_lambda(X, y, 0, 4, 0.1)
+# (Xtest,m) = create_features(window_length, window_step, train_file_name + '.wav')
+# ytest = create_labels(window_length, window_step, m, train_file_name + '.txt')
+
+# show_smoothing(X,y, lamb = 0, show_history = False, theta = None)
+
+find_lambda(X, y, 0, .2, .02)
 
 # (a1, a2, theta) = train_n_times(X, y, lamb=0, alpha = 0.3, num_iter = 2000, n = 1)
 # show_smoothing(Xtest,ytest, lamb = 0.5, show_history = False, theta = theta)
 
-show_smoothing(X,y, lamb = 0.5, show_history = False, theta = None)
-
-# print("average accuracies")
-# print(a1)
-# print(a2)
-# print(theta)
-# h = get_h(X, theta)
-# smoothed_h = smooth_h(h, window = 20)
-# result = get_result(smoothed_h, threshold = 0.5)
-# smoothed_result = smooth_result(result, window = 20, method = 'sliding')
-# intervals = create_intervals(smoothed_result)
-# write_intervals(intervals, "new_balanced.txt", window_step)
-# show_smoothing(X,y, lamb = 0, show_history = True)
-
-# write_intervals(create_intervals(smoothed_result), 'new_short_result.txt', window_step)
 
 
 
